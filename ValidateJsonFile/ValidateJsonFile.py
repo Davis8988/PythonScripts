@@ -1,13 +1,16 @@
 # Function to validate json files:
 
-# importing enum for enumerations
-import enum
+import enum # For ValueType as enumerations
+import ast # For converting string representation of list to actual list variable
 
 # creating enumerations using class
 class ValueType(enum.Enum):
     string = 1
     number = 2
-    jsonObject = 3
+    list = 3
+    jsonObject = 4
+
+spaceChars = [""," ","\n","\t"]
 
 
 def validateJsonFile(jsonFilePath):
@@ -51,7 +54,7 @@ def validateJsonObject(jsonobj):
         return [True, jsonobj]
 
     subJsonObj = jsonobj[1:-1]
-    curInd = 1;
+    curInd = 0;
     while (curInd < len(subJsonObj)):
         nextPair = getNextPair(curInd, subJsonObj);
         if nextPair[0] is None:
@@ -59,10 +62,11 @@ def validateJsonObject(jsonobj):
 
         print(nextPair)
         curInd = nextPair[1];
+        getCommaResult = getNextCommaOrEndSignIndex(curInd+1,subJsonObj);
 
-        curInd = getNextCommaOrEndSignIndex(nextPair[1],subJsonObj);
+        curInd = getCommaResult[0]
         if curInd == -1:
-            errorStr = "getNextCommaOrEndSignIndex() returned -1. Index="+str(nextPair[1])+", subJsonObj="+subJsonObj
+            errorStr = getCommaResult[1];
             return [False , errorStr];
 
         curInd += 1;
@@ -81,9 +85,10 @@ def getNextPair(curInd , jsonobj):
     pair.append(key[0]);
     curInd = key[1];
 
-    curInd = getNextColonSignIndex(curInd+1,jsonobj);
+    colonResult = getNextColonSignIndex(curInd+1,jsonobj);
+    curInd = colonResult[0]
     if curInd == -1:
-        errorStr = "Could not find Colon ':' sign. Start Iindex=" + str(curInd) + ",jsonobj=" + jsonobj
+        errorStr = "Could not find Colon ':' sign. "+colonResult[1]+"\nStart Iindex=" + str(curInd) + ",jsonobj=" + jsonobj
         return [None, errorStr];
 
     value = getNextValue(curInd+1,jsonobj)
@@ -100,12 +105,12 @@ def getNextKey(curInd , jsonObj):
     key = "";
     foundInd = -1;
     foundFirstQuote = False;
-    errorStr = "";
+    errorStr = "Could not get next key";
     for i in range(curInd,len(jsonObj)):
         ch = jsonObj[i];
 
         # Continue until encounter the first quote sign "
-        if (not foundFirstQuote) and (ch == ' ' or ch == '\t' or ch == '\n' or ch == ''):
+        if (not foundFirstQuote) and ch in spaceChars:
             continue;
 
         # When found - mark 'foundFirstQuote'
@@ -136,119 +141,204 @@ def getNextColonSignIndex(curInd , jsonObj):
     for i in range(curInd,len(jsonObj)):
         ch = jsonObj[i];
 
-        if ch == ' ' or ch == '\n':
+        if ch in spaceChars:
             continue;
         elif ch == ':':
-            return i;
+            info = ""
+            return [i,info];
         else:
-            return -1;
+            info = "Found Bad Char: "+ch;
+            break;
 
-    return -1;
+    return [-1,info];
 
 def getNextValue(curInd , jsonObj):
-    value = "";
-    foundInd = -1;
+    readResult = [];
     valueType = -1;
-    curlyBracketsCount = 0;
     info = "";
     for i in range(curInd,len(jsonObj)):
         ch = jsonObj[i];
 
         # Looking for the value:
-        if valueType == -1 and (ch == ' ' or ch == '\n'):
+        if valueType == -1 and ch in spaceChars:
             continue;
 
-            # String Value - Start
+            # String Value
         elif valueType == -1 and ch == '"' :
-            info += " Found first quote sign '"' - looking for a String value.'
             valueType = (ValueType.string).value;
-
-        elif valueType == (ValueType.string).value and ch != '"':
-            value += ch;
-
-        elif valueType == (ValueType.string).value and ch == '"':
-            foundInd = i+1;
-            info += " Found second quote sign '"'.'
-            info += " Read Value: '" + value + "'. Done"
+            readResult = readStringValue(i , jsonObj)
             break;
-            # String Value - End
 
-            # Number Value - Start
-        elif (valueType == -1 or valueType == (ValueType.number).value) and ch.isdigit():
-            if valueType == -1:
-                info += " Found digit - Looking for Number value."
-            value += ch;
+            # Number Value
+        elif (valueType == -1) and ch.isdigit():
+            info += " Found digit - Looking for Number value."
             valueType = (ValueType.number).value;
-
-        elif valueType == (ValueType.number).value and not ch.isdigit():
-            if ch == ',' or ch == ' ' or ch == '\n' or ch == '}':
-                foundInd = i;
-            else:
-                # Bad value case
-                info += " Found bad char: '"+ch+"' while reading the number: '"+value+"'.";
-                foundInd = -1;
-
+            readResult = readNumberValue(i, jsonObj)
             break;
 
-            # Number Value - End
+            # List Value
+        elif valueType == -1 and ch == '[':
+            valueType = (ValueType.list).value;
+            readResult = readListValue(i, jsonObj);
+            break;
 
-            # JsonObject Value - Start
-        elif (valueType == -1 or valueType == (ValueType.jsonObject).value) and ch == '{':
-            if valueType == -1:
-                info += " Found '{' - Looking for Json-Object value."
-            value += ch;
+            # JsonObject Value
+        elif valueType == -1 and ch == '{':
             valueType = (ValueType.jsonObject).value;
-            curlyBracketsCount += 1;
+            readResult = readJsonObjectValue(i, jsonObj);
+            break;
+        else:
+            continue;
 
-        elif valueType == (ValueType.jsonObject).value and ch != '{' and ch != '}':
-            value += ch;
+    foundInd = readResult[0];
+    value = readResult[1];
+    info += readResult[2];
+    if foundInd == -1:
+        errorStr = info + " Error while trying to read value: " + value
+        return [None, errorStr];
 
-        elif valueType == (ValueType.jsonObject).value and ch == '}':
-            value += ch;
-            foundInd = i+1;
-            curlyBracketsCount -= 1;
-            if curlyBracketsCount == 0:
-                break;
-            # JsonObject Value - End
+    validateResult = validateValue(value,valueType,foundInd)
 
-    validateRes = validateValue(value,valueType,foundInd,curlyBracketsCount)
-    if validateRes[0]:
+    if validateResult[0] == True:
         return [value,foundInd];
     else:
-        errorStr = info + " Error: "+validateRes[1];
+        errorStr = info + " Error: "+validateResult[1];
         return [None,errorStr];
 
+def readStringValue(curInd, jsonObj):
+    value = "";
+    info = "";
+    foundFirstQoute = False
+    foundInd = -1;
+    for i in range(curInd,len(jsonObj)):
+        ch = jsonObj[i];
+        if not foundFirstQoute and ch in spaceChars:
+            continue;
 
-def validateValue(value,valueType,foundInd,curlyBracketsCount):
+        elif not foundFirstQoute and ch == '"':
+            info += " Found first quote sign '"' - looking for a String value.'
+            foundFirstQoute = True;
+            continue;
+
+        elif foundFirstQoute and not ch == '"':
+            value += ch;
+
+        elif foundFirstQoute and ch == '"':
+            foundInd = i;
+            break;
+
+    return [foundInd , value , info]
+
+def readNumberValue(curInd, jsonObj):
+    value = "";
+    info = "";
+    foundInd = -1;
+    for i in range(curInd,len(jsonObj)):
+        ch = jsonObj[i];
+        if ch.isdigit():
+            foundInd = i
+            value += ch;
+        elif (ch in spaceChars) or ch == '}' or ch == ',':
+            break;
+        else:
+            # Bad value case
+            info += " Found bad char: '" + ch + "' while reading the number: '" + value + "'.";
+            foundInd = -1;
+            break;
+
+    return [foundInd , value , info]
+
+def readJsonObjectValue(curInd, jsonObj):
+    value = "";
+    info = "";
+    foundInd = -1;
+    curlyBracketsCount = 0;
+    for i in range(curInd,len(jsonObj)):
+        ch = jsonObj[i];
+
+        value += ch;
+
+        if ch == '{':
+            curlyBracketsCount += 1;
+        elif ch == '}':
+            curlyBracketsCount -= 1;
+            if curlyBracketsCount == 0:
+                foundInd = i;
+                break;
+
+    return [foundInd , value , info]
+
+def readListValue(curInd, jsonObj):
+    value = "";
+    info = "";
+    foundInd = -1;
+    squareBracketsCount = 0;
+    for i in range(curInd,len(jsonObj)):
+        ch = jsonObj[i];
+
+        value += ch;
+
+        if ch == '[':
+            squareBracketsCount += 1;
+        elif ch == ']':
+            squareBracketsCount -= 1;
+            if squareBracketsCount == 0:
+                foundInd = i;
+                break;
+
+    return [foundInd , value , info]
+
+def validateValue(value,valueType,foundInd):
     if foundInd == -1:
         return [False, "Found index is -1. Could not find value(or end of value)"];
 
     if valueType == (ValueType.jsonObject).value:
-        if curlyBracketsCount != 0:
-            return [False, "Curly Brackets is not 0. Not even number of '{' and '}'"];
-        else:
-            return (validateJsonObject(value));
+        return (validateJsonObject(value));
+
+    if valueType == (ValueType.list).value:
+        return (validateListValue(value));
 
     return [True,"Value is ok"];
 
 
+def validateListValue(value):
+    if len(value) == 2:
+        return [True, "List is empty"]
+
+    try:
+        validateRes = ast.literal_eval(value)
+        return [True, ""]
+    except SyntaxError:
+        info = "List: "+value+"\nis of wrong syntax. Correct list values syntax is: [\"StringVal\" , Digits, True, False, [AnotherList] ]"
+        return [False, info]
+    except:
+        info = "Unknown error occured while validating list: "+value
+        return [False, info]
+
+
+
 
 def getNextCommaOrEndSignIndex(curInd,jsonobj):
-    if curInd == len(jsonobj):
-        return curInd;
-
     for i in range(curInd,len(jsonobj)):
         ch = jsonobj[i]
 
-        if ch == ' ' or ch == '\n' or ch == '\t':
+        if ch in spaceChars:
             continue;
         elif ch == ',':
-            return i;
+            # Check if have enough chars for another key
+            if (len(jsonobj) - i) >= 5:
+                info = ""
+                return [i, info];
+            else:
+                info = "Found comma sign ',' but not enough space for another key after it before the end of the string."
+                return [-1, info];
         else:
-            return -1;
+            info = "Found Bad Char: "+ch;
+            return [-1, info];
 
     # Default value - no comma
-    return len(jsonobj);
+    info = "End of object - No comma found after char index "+str(curInd)+"\nObject: " + jsonobj;
+    return [len(jsonobj), info];
 
 
 
